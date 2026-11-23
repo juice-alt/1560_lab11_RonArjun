@@ -1,0 +1,136 @@
+simulate_arrivals <- function(rates, start_time, end_time) {
+  required <- c("origin", "destination", "hour", "rate")
+  if (!all(required %in% names(rates))) {
+    stop("missing columns")
+  }
+  start_time <- ymd_hms(start_time, tz = "America/New_York")
+  end_time <- ymd_hms(end_time, tz = "America/New_York")
+  if (length(start_time) != 1 || length(end_time) != 1 ||
+      is.na(start_time) || is.na(end_time) ||
+      end_time <= start_time) {
+    stop("Invalid window")
+  }
+  if (any(is.na(rates$origin)) ||
+      any(is.na(rates$destination)) ||
+      any(is.na(rates$hour)) ||
+      any(!is.finite(rates$hour)) ||
+      any(rates$hour < 0) || any(rates$hour > 23) ||
+      any(rates$hour %% 1 != 0)) {
+    stop("invalid station/hour")
+  }
+  if (!is.numeric(rates$rate) ||
+      any(!is.finite(rates$rate[!is.na(rates$rate)])) ||
+      any(rates$rate < 0, na.rm = TRUE)) {
+    stop("invalid arrival rates")
+  }
+  if (any(duplicated(rates[, c("origin", "destination", "hour")]))) {
+    stop("duplicate combinations")
+  }
+  # Create empty arrival table
+  arrivals <- data.frame(
+    origin = character(),
+    destination = character(),
+    arrival_time = as.POSIXct(character(),
+                              tz = "America/New_York")
+  )
+  # Identify pairs
+  pairs <- rates %>%
+    distinct(origin, destination)
+  for (i in seq_len(nrow(pairs))) {
+    s <- pairs$origin[i]
+    t <- pairs$destination[i]
+    pair_rates <- rates %>%
+      filter(origin == s, destination == t)
+    # NA rates represent unidentified demand, not measured zero
+    # For this simulation, treat those hours as zero
+    hourly_rates <- rep(0, 24)
+    hourly_rates[pair_rates$hour + 1] <-
+      ifelse(is.na(pair_rates$rate), 0, pair_rates$rate)
+    # Find maximum hourly rate
+    M <- max(hourly_rates)
+    if (M == 0) {
+      next
+    }
+    # Generate candidate arrivals
+    candidate_time <- start_time
+    candidates <- as.POSIXct(character(),
+                             tz = "America/New_York")
+    repeat {
+      #  waiting timeconverted to seconds
+      waiting_time <- rexp(1, rate = M) * 3600
+      candidate_time <- candidate_time + waiting_time
+      if (candidate_time >= end_time) {
+        break
+      }
+      candidates <- c(candidates, candidate_time)
+    }
+    # Apply thinning
+    for (j in seq_along(candidates)) {
+      u <- candidates[j]
+      h <- hour(u)
+      hourly_rate <- hourly_rates[h + 1]
+      acceptance_probability <- hourly_rate / M
+      if (runif(1) < acceptance_probability) {
+        arrivals <- bind_rows(
+          arrivals,
+          data.frame(
+            origin = s,
+            destination = t,
+            arrival_time = u
+          )
+        )
+      }
+    }
+  }
+  # Sort by arrival time
+  arrivals <- arrivals %>%
+    arrange(arrival_time)
+  return(arrivals)
+}
+# Simulate arrivals
+set.seed(5)
+simulated_arrivals <- simulate_arrivals(
+  rates,
+  start_time = "2022-02-22 00:00:00",
+  end_time = "2022-02-23 00:00:00"
+)
+head(simulated_arrivals)
+nrow(simulated_arrivals)
+# Check: 0 arrival rates
+test_zero <- data.frame(
+  origin = "A",
+  destination = "B",
+  hour = 0:23,
+  rate = rep(0, 24)
+)
+zero_arrivals <- simulate_arrivals(
+  test_zero,
+  "2022-02-22 00:00:00",
+  "2022-02-23 00:00:00"
+)
+stopifnot(
+  nrow(zero_arrivals) == 0,
+  all(names(zero_arrivals) ==
+        c("origin", "destination", "arrival_time"))
+)
+# Check: Arrivals must be in the window
+test_rates <- data.frame(
+  origin = "A",
+  destination = "B",
+  hour = 0:23,
+  rate = rep(10, 24)
+)
+set.seed(5)
+test_arrivals <- simulate_arrivals(
+  test_rates,
+  "2022-02-22 09:00:00",
+  "2022-02-22 10:00:00"
+)
+stopifnot(
+  nrow(test_arrivals) > 0,
+  all(test_arrivals$arrival_time >=
+        ymd_hms("2022-02-22 09:00:00", tz = "America/New_York")),
+  all(test_arrivals$arrival_time <
+        ymd_hms("2022-02-22 10:00:00", tz = "America/New_York"))
+)
+print("All checks passed")
