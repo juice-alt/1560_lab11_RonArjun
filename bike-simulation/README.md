@@ -11,3 +11,5 @@ It then generates candidate arrival times from the homogeneous Poisson process, 
 the exponential waiting times from hours into seconds. For each candidate, the function identifies
 its hour and calculates the probability of acceptance by dividing that hour's rate by the maximum rate. 
 All accepted requests are combined into a data frame and sorted chronologically.
+
+When committing a change in a repository, you're creating a sort of checkpoint or entry that describes a change in the project history. Saving simply writes a change onto a computer's hard disk. 
